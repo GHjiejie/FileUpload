@@ -16,18 +16,16 @@
 import { ref } from "vue";
 import axios from "axios";
 
+// 状态管理
 const file = ref(null);
-const chunkSize = ref(1024 * 1024); // 每片大小1MB
+const chunkSize = ref(0); // 分片大小
 const progress = ref(null);
 const uploadedChunks = ref([]);
 const currentChunk = ref(0); // 当前分片索引
 const totalChunks = ref(0); // 总分片数量
 const uniqueId = ref(""); // 用于存储文件的唯一ID
 
-// 假设这里有用户信息，比如用户ID
-// 这个是非常重要的，就是用户的唯一标识符，用于标识用户上传的文件，因为用户可能上传相同的文件，
-// 之前尝试过使用uuid和hash作为唯一标识符，uuid的做法会导致断点续传的功能失效，hash的做法会导致用户上传相同文件时获取其他用户上传的文件进度
-const userId = "user234"; // 这应该来自你的用户认证系统
+const userId = "user234"; // 用户唯一标识符
 
 // 处理文件选择
 const handleFileChange = (e) => {
@@ -36,6 +34,17 @@ const handleFileChange = (e) => {
 
   // 创建唯一标识符
   uniqueId.value = `${userId}-${file.value.name}`; // 组合成唯一ID
+};
+
+// 动态计算分片大小
+const calculateChunkSize = (fileSize) => {
+  if (fileSize < 10 * 1024 * 1024) { // 小于 10MB
+    return 512 * 1024; // 512KB
+  } else if (fileSize < 100 * 1024 * 1024) { // 10MB 到 100MB
+    return 1 * 1024 * 1024; // 1MB
+  } else { // 大于 100MB
+    return 2 * 1024 * 1024; // 2MB
+  }
 };
 
 // 获取已上传的分片
@@ -56,14 +65,12 @@ const uploadChunks = async () => {
     return;
   }
 
-  // 获取文件的总大小
   const totalSize = file.value.size;
-  // 计算文件需要分片的总数
-  totalChunks.value = Math.ceil(totalSize / chunkSize.value);
-  // 初始化当前分片索引
-  currentChunk.value = 0;
+  chunkSize.value = calculateChunkSize(totalSize); // 动态设置分片大小
+  totalChunks.value = Math.ceil(totalSize / chunkSize.value); // 计算总分片数
+  currentChunk.value = 0; // 初始化当前分片索引
 
-  // 获取已上传分片
+  // 获取已上传的分片
   await fetchUploadedChunks();
 
   // 循环上传每一片
@@ -94,8 +101,7 @@ const uploadChunks = async () => {
         onUploadProgress: (e) => {
           // 更新进度，使用相对值计算
           progress.value = Math.round(
-            ((currentChunk.value + e.loaded / e.total) / totalChunks.value) *
-              100
+            ((currentChunk.value + e.loaded / e.total) / totalChunks.value) * 100
           );
         },
       });
@@ -106,7 +112,7 @@ const uploadChunks = async () => {
       break; // 出现错误时停止上传
     }
 
-    currentChunk.value++;
+    currentChunk.value++; // 处理下一个分片
   }
 
   // 上传完成后重置进度
@@ -119,34 +125,77 @@ const uploadChunks = async () => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 20px;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  background-color: #f9f9f9;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-  width: 300px;
+  padding: 30px;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  background-color: #ffffff;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  width: 400px;
   margin: auto;
+  transition: box-shadow 0.3s ease;
+}
+
+.file-upload:hover {
+  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.2);
+}
+
+h2 {
+  color: #333;
+  font-size: 24px;
+  margin-bottom: 20px;
+}
+
+input[type="file"] {
+  margin-bottom: 15px;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  width: 100%;
+  font-size: 16px;
+  transition: border-color 0.3s ease;
+}
+
+input[type="file"]:hover {
+  border-color: #007bff;
+}
+
+button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  background-color: #007bff;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+button:hover {
+  background-color: #0056b3;
 }
 
 .progress-container {
-  margin-top: 10px;
+  margin-top: 20px;
   width: 100%;
   text-align: center;
+}
 
-  progress {
-    width: 100%;
-    height: 20px;
-    border-radius: 10px;
-  }
+progress {
+  width: 100%;
+  height: 25px;
+  border-radius: 5px;
+  background-color: #f3f3f3;
+}
 
-  span {
-    margin-left: 10px;
-    font-weight: bold;
-  }
+span {
+  margin-left: 10px;
+  font-weight: bold;
+  color: #333;
+}
 
-  p {
-    margin-top: 5px;
-    font-weight: 600;
-  }
+p {
+  margin-top: 5px;
+  font-weight: 600;
+  color: #666;
 }
 </style>
