@@ -8,12 +8,10 @@ const router = express.Router();
 const uploadDir = path.join(__dirname, "../public/upload");
 const tempDir = path.join(uploadDir, "temp"); // 临时存储目录
 
-// 判断文件夹是否存在，不存在则创建
+// 确保上传目录和临时目录存在
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
-
-// 创建临时文件夹
 if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
 }
@@ -22,7 +20,7 @@ if (!fs.existsSync(tempDir)) {
 const storage = multer.memoryStorage(); // 使用内存存储
 const upload = multer({ storage: storage });
 
-// 用于存储上传状态的 JSON 文件路径
+// 上传状态 JSON 文件路径
 const uploadStatusFile = path.join(uploadDir, "uploadStatus.json");
 
 // 初始化或读取上传状态
@@ -31,28 +29,21 @@ function initUploadStatus() {
     fs.writeFileSync(uploadStatusFile, JSON.stringify({}));
   }
 }
-
 initUploadStatus();
 
 // 处理分片上传
 router.post("/upload", upload.single("file"), (req, res) => {
-  const { chunkIndex, totalChunks, filename, fileSize, md5 } = req.body;
+  const { chunkIndex, totalChunks, filename, fileSize, uniqueId } = req.body;
 
   if (!req.file) {
     return res.status(400).send("没有文件上传");
   }
 
-  // 构造文件路径
-  const chunkPath = path.join(tempDir, `${filename}.chunk-${chunkIndex}`);
-
-  // 如果上传文件的 MD5 不匹配，返回错误
-  const hash = crypto.createHash("md5");
-  hash.update(req.file.buffer);
-  const calculatedMd5 = hash.digest("hex");
-
-  if (calculatedMd5 !== md5) {
-    return res.status(400).send("MD5 校验失败，文件可能损坏");
-  }
+  // 构造分片文件路径
+  const chunkPath = path.join(
+    tempDir,
+    `${uniqueId}.${filename}.chunk-${chunkIndex}`
+  );
 
   // 保存分片到指定路径
   fs.writeFile(chunkPath, req.file.buffer, (err) => {
@@ -64,12 +55,12 @@ router.post("/upload", upload.single("file"), (req, res) => {
     console.log(`分片 ${chunkIndex} 上传成功`);
 
     // 更新上传状态
-    updateUploadStatus(filename, chunkIndex, fileSize);
+    updateUploadStatus(uniqueId, filename, chunkIndex, fileSize);
 
     // 检查是否是最后一个分片
     if (parseInt(chunkIndex) === parseInt(totalChunks) - 1) {
       console.log("所有分片上传完成");
-      mergeChunks(filename, totalChunks); // 合并分片
+      mergeChunks(uniqueId, filename, totalChunks); // 合并分片
     }
 
     return res.status(200).send("分片上传成功");
@@ -77,54 +68,61 @@ router.post("/upload", upload.single("file"), (req, res) => {
 });
 
 // 更新上传状态
-function updateUploadStatus(filename, chunkIndex, fileSize) {
+function updateUploadStatus(uniqueId, filename, chunkIndex, fileSize) {
   const status = JSON.parse(fs.readFileSync(uploadStatusFile));
 
   // 如果该文件未被记录，则初始化
-  if (!status[filename]) {
-    status[filename] = {
+  if (!status[uniqueId]) {
+    status[uniqueId] = {
+      filename: filename,
       uploadedChunks: [],
       fileSize: fileSize,
     };
   }
 
   // 记录已上传的分片索引
-  if (!status[filename].uploadedChunks.includes(parseInt(chunkIndex))) {
-    status[filename].uploadedChunks.push(parseInt(chunkIndex));
+  if (!status[uniqueId].uploadedChunks.includes(parseInt(chunkIndex))) {
+    status[uniqueId].uploadedChunks.push(parseInt(chunkIndex));
   }
 
   fs.writeFileSync(uploadStatusFile, JSON.stringify(status));
 }
 
 // 获取上传状态
-router.get("/upload-status/:filename", (req, res) => {
-  const { filename } = req.params;
-  console.log("获取上传状态", filename);
+router.get("/upload-status/:uniqueId", (req, res) => {
+  const { uniqueId } = req.params;
+  console.log("获取上传状态", uniqueId);
   const status = JSON.parse(fs.readFileSync(uploadStatusFile));
-  const uploadedChunks = status[filename]
-    ? status[filename].uploadedChunks
+  const uploadedChunks = status[uniqueId]
+    ? status[uniqueId].uploadedChunks
     : [];
   res.status(200).json({ uploadedChunks });
 });
 
 // 合并分片函数
-function mergeChunks(filename, totalChunks) {
+function mergeChunks(uniqueId, filename, totalChunks) {
   const finalFilePath = path.join(uploadDir, filename);
   const writeStream = fs.createWriteStream(finalFilePath);
 
-  let chunkCount = 0;
+  let chunkCount = 0; // 已合并的分片数量
 
   function readChunk(i) {
-    const chunkPath = path.join(tempDir, `${filename}.chunk-${i}`);
-    const readStream = fs.createReadStream(chunkPath);
+    const chunkPath = path.join(tempDir, `${uniqueId}.${filename}.chunk-${i}`);
 
+    // 判断分片文件是否存在
+    if (!fs.existsSync(chunkPath)) {
+      console.error(`分片文件不存在: ${chunkPath}`);
+      return;
+    }
+
+    const readStream = fs.createReadStream(chunkPath);
     readStream.pipe(writeStream, { end: false });
 
     readStream.on("end", () => {
       chunkCount++;
       fs.unlinkSync(chunkPath); // 删除已合并的分片文件
       if (chunkCount < totalChunks) {
-        readChunk(chunkCount);
+        readChunk(chunkCount); // 继续读取下一个分片
       } else {
         writeStream.end(); // 所有分片已合并
         console.log("所有分片合并完成");
@@ -136,7 +134,7 @@ function mergeChunks(filename, totalChunks) {
     });
   }
 
-  readChunk(0);
+  readChunk(0); // 开始读取第一个分片
 }
 
 module.exports = router;
